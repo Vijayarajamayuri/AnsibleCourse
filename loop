@@ -1,4 +1,12 @@
 name:
 hosts:
 tasks:
-  - user: 
+  - user: {{item}} state: present
+    loop:
+      - Joe
+      - John
+=====================
+
+same as loop we have with_lookupplugin i.e. with_item
+
+==========================
