@@ -1,0 +1,99 @@
+--- 
+- name: Check if the NFS is working
+  hosts: checkhosts 
+  become: false 
+  gather_facts: false 
+  vars: 
+    ansible_mount_result: [] 
+  tasks: 
+    - name: Are we connected? 
+      ping: 
+
+    - name: Get list of NFS mounts 
+      shell: mount | grep 'type nfs' | awk '{print $3}' 
+      register: nfs_mounts 
+      changed_when: false 
+
+    - ansible.builtin.set_fact: 
+        ansible_mount_result: '{{ ansible_mount_result + [reason] }}' 
+      vars: 
+        reason: "no_nfs_mount_found" 
+      when: nfs_mounts.stdout | length == 0 
+    
+    - name: Display NFS mount information 
+      debug: 
+        msg: "Found NFS mounts: {{ nfs_mounts.stdout_lines }}" 
+      when: nfs_mounts.stdout_lines | length > 0 
+    
+    - name: List contents of NFS mount paths 
+      command: ls -la {{ item }} 
+      loop: "{{ nfs_mounts.stdout_lines }}" 
+      register: ls_results 
+      ignore_errors: yes 
+      when: nfs_mounts.stdout_lines | length > 0 
+    
+    - name: Report on NFS mount path contents 
+      debug: 
+        msg: >  
+          Mount path: {{ item.item }} 
+          Status: {{ 'Success' if item.rc == 0 else 'Failed' }} 
+          {% if item.rc == 0 %}
+          {% else %}
+          Error: {{ item.stderr }}
+          {% endif %} 
+      loop: "{{ ls_results.results }}"
+      when: nfs_mounts.stdout_lines | length > 0
+      loop_control: 
+        label: "{{ item.item }}" 
+    
+    - ansible.builtin.set_fact:
+        ansible_mount_result: '{{ ansible_mount_result + [reason] }}' 
+      vars: 
+        reason: "mount_path: {{ item.item }} | status: {{ 'Good' if item.rc == 0 else 'Bad' }}" 
+      loop: "{{ ls_results.results }}" 
+      when: nfs_mounts.stdout | length > 0
+      loop_control: 
+        label: "{{ item.item }}" 
+    
+    - debug: 
+        var: ansible_mount_result
+      when: nfs_mounts.stdout | length > 0
+
+    - setup:
+        gather_subset:
+          - "!all"
+          - "min"
+      when: nfs_mounts.stdout_lines | length > 0
+
+    - block:
+        - name: Check if the system is RHEL 8
+          set_fact:
+            is_rhel8: "{{ ansible_distribution == 'RedHat' and ansible_distribution_major_version == '8' }}"
+
+        - name: Update /etc/fstab for NFS mounts on RHEL8
+          replace:
+            path: /etc/fstab
+            regexp: '^(.*\s+{{ item }}\s+nfs\s+defaults)(,|\s+)(.*)$'
+            replace: '\1,nfsvers=4.1\2\3'
+          loop: "{{ nfs_mounts.stdout_lines }}"
+                                                                                                                                                                                              
+    - name: Unmount NFS filesystems on RHEL8
+          command: umount {{ item }}
+          loop: "{{ nfs_mounts.stdout_lines }}"
+                                                                                                                                                                                              
+    - name: Mount NFS filesystems on RHEL8
+          command: mount {{ item }}
+          loop: "{{ nfs_mounts.stdout_lines }}"
+          
+        - name: Verify NFS mounts after remounting on RHEL8
+          command: mount | grep 'type nfs'
+          register: nfs_mounts_after
+          changed_when: false 
+          
+        - name: Display updated NFS mount information for RHEL8
+          debug:
+          msg: "Updated NFS mounts: {{ nfs_mounts_after.stdout_lines }}"
+          
+      when:
+        - is_rhel8
+        - nfs_mounts.stdout_lines | length > 0
